@@ -1,0 +1,913 @@
+// AudioNest Database Schema
+// Premium Audio Content Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// User & Authentication
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  username      String    @unique
+  passwordHash  String?
+  avatarUrl     String?
+  phone         String?
+
+  // Subscription
+  subscription          SubscriptionTier @default(FREE)
+  subscriptionExpiresAt DateTime?
+  subscriptionPlatform  String?
+
+  // Coins
+  coins         Int       @default(0)
+
+  // Listening Stats
+  totalListenTime       Int @default(0) // in minutes
+  totalEpisodesCompleted Int @default(0)
+  currentStreak         Int @default(0)
+  longestStreak         Int @default(0)
+  lastListenDate        DateTime?
+
+  // Preferences
+  preferences   Json      @default("{}")
+
+  // Timestamps
+  lastActiveAt  DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  subscriptions       Subscription[]
+  listeningHistory    ListeningHistory[]
+  librarySubscriptions LibrarySubscription[]
+  libraryLikes        LibraryLike[]
+  playlists           Playlist[]
+  downloads           Download[]
+  coinTransactions    CoinTransaction[]
+  purchases           Purchase[]
+  creator             Creator?
+  comments            Comment[]
+  reviews             Review[]
+  achievements        UserAchievement[]
+  notifications       Notification[]
+  giftsSent           LiveGiftTransaction[] @relation("GiftSender")
+
+  // OAuth accounts
+  accounts      Account[]
+  sessions      Session[]
+
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+enum SubscriptionTier {
+  FREE
+  VIP
+  SVIP
+}
+
+// ============================================
+// Subscription & Payments
+// ============================================
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String
+
+  tier      SubscriptionTier
+  status    SubscriptionStatus @default(ACTIVE)
+
+  // Payment
+  platform  PaymentPlatform
+  planType  PlanType
+  amount    Int
+  currency  String   @default("KRW")
+
+  // Period
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  canceledAt         DateTime?
+
+  // External IDs
+  externalSubscriptionId String?
+  externalCustomerId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  EXPIRED
+  PAUSED
+}
+
+enum PaymentPlatform {
+  TOSS
+  STRIPE
+  APPLE
+  GOOGLE
+}
+
+enum PlanType {
+  MONTHLY
+  YEARLY
+}
+
+model CoinTransaction {
+  id        String   @id @default(cuid())
+  userId    String
+
+  type      CoinTransactionType
+  amount    Int      // positive for credit, negative for debit
+  balance   Int      // balance after transaction
+
+  // Reference
+  referenceType String?
+  referenceId   String?
+  description   String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("coin_transactions")
+}
+
+enum CoinTransactionType {
+  PURCHASE
+  SUBSCRIPTION_BONUS
+  ACHIEVEMENT
+  GIFT_SENT
+  GIFT_RECEIVED
+  CONTENT_PURCHASE
+  REFUND
+  STREAK_BONUS
+}
+
+model Purchase {
+  id        String   @id @default(cuid())
+  userId    String
+
+  // Item
+  itemType  PurchaseItemType
+  itemId    String
+
+  // Payment
+  amount    Int
+  currency  String   @default("KRW")
+  coinAmount Int?
+
+  status    PurchaseStatus @default(COMPLETED)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([itemType, itemId])
+  @@map("purchases")
+}
+
+enum PurchaseItemType {
+  ALBUM
+  EPISODE
+  COIN_PACKAGE
+}
+
+enum PurchaseStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ============================================
+// Content - Albums & Episodes
+// ============================================
+
+model Album {
+  id          String   @id @default(cuid())
+
+  // Basic Info
+  title       String
+  subtitle    String?
+  description String?  @db.Text
+  coverUrl    String?
+
+  // Classification
+  category    Category
+  subcategory String?
+  tags        String[]
+
+  // Creator
+  creatorId   String
+  narratorId  String?
+
+  // Content Info
+  contentType ContentType @default(AUDIOBOOK)
+  totalEpisodes Int       @default(0)
+  totalDuration Int       @default(0) // in seconds
+
+  // Access Control
+  accessType  AccessType  @default(FREEMIUM)
+  price       Int?
+  coinPrice   Int?
+
+  // Statistics
+  playCount       BigInt  @default(0)
+  subscriberCount Int     @default(0)
+  likeCount       Int     @default(0)
+  rating          Float   @default(0)
+  ratingCount     Int     @default(0)
+
+  // Status
+  status          AlbumStatus @default(ONGOING)
+  updateFrequency String?
+  lastEpisodeAt   DateTime?
+
+  // Book Info (for audiobooks)
+  bookInfo    Json?
+
+  // Flags
+  isFeatured  Boolean @default(false)
+  isPublished Boolean @default(true)
+  isExclusive Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  creator     Creator   @relation("AlbumCreator", fields: [creatorId], references: [id])
+  narrator    Creator?  @relation("AlbumNarrator", fields: [narratorId], references: [id])
+  episodes    Episode[]
+  librarySubscriptions LibrarySubscription[]
+  libraryLikes LibraryLike[]
+  reviews     Review[]
+
+  @@index([category])
+  @@index([creatorId])
+  @@index([isFeatured, playCount(sort: Desc)])
+  @@index([isPublished, createdAt(sort: Desc)])
+  @@map("albums")
+}
+
+enum Category {
+  AUDIOBOOK_FICTION
+  AUDIOBOOK_NONFICTION
+  AUDIOBOOK_SELFHELP
+  AUDIOBOOK_BUSINESS
+  PODCAST_TALK
+  PODCAST_COMEDY
+  PODCAST_NEWS
+  PODCAST_TRUE_CRIME
+  COURSE_LANGUAGE
+  COURSE_SKILL
+  KIDS
+  ASMR
+  SLEEP
+  MUSIC
+}
+
+enum ContentType {
+  AUDIOBOOK
+  PODCAST
+  COURSE
+  ASMR
+  MUSIC
+  RADIO
+}
+
+enum AccessType {
+  FREE
+  FREEMIUM
+  VIP
+  PAID
+}
+
+enum AlbumStatus {
+  ONGOING
+  COMPLETED
+  HIATUS
+}
+
+model Episode {
+  id        String   @id @default(cuid())
+  albumId   String
+
+  // Basic Info
+  number    Int
+  title     String
+  description String? @db.Text
+
+  // Audio
+  audioUrl  String
+  duration  Int      // in seconds
+  fileSize  BigInt?
+  waveformData Json?
+
+  // Access Control
+  accessType EpisodeAccessType @default(VIP)
+  previewDuration Int?
+
+  // Chapters
+  chapters  Json?
+
+  // Statistics
+  playCount    Int @default(0)
+  likeCount    Int @default(0)
+  commentCount Int @default(0)
+
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  album         Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  listeningHistory ListeningHistory[]
+  libraryLikes  LibraryLike[]
+  playlistEpisodes PlaylistEpisode[]
+  downloads     Download[]
+  comments      Comment[]
+
+  @@unique([albumId, number])
+  @@index([albumId, number])
+  @@map("episodes")
+}
+
+enum EpisodeAccessType {
+  FREE
+  VIP
+  PAID
+  PREVIEW
+}
+
+// ============================================
+// Creator
+// ============================================
+
+model Creator {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  // Profile
+  name          String
+  displayName   String?
+  bio           String?  @db.Text
+  avatarUrl     String?
+  coverImageUrl String?
+
+  // Verification
+  isVerified    Boolean  @default(false)
+  verifiedAt    DateTime?
+
+  // Type
+  type          CreatorType @default(INDIVIDUAL)
+
+  // Statistics
+  totalAlbums     Int     @default(0)
+  totalEpisodes   Int     @default(0)
+  totalPlayCount  BigInt  @default(0)
+  followerCount   Int     @default(0)
+
+  // Revenue
+  totalRevenue    Decimal @default(0) @db.Decimal(12, 2)
+  pendingRevenue  Decimal @default(0) @db.Decimal(12, 2)
+  revenueShareRate Decimal @default(0.5) @db.Decimal(3, 2)
+
+  // Social Links
+  links         Json?
+
+  // Payment Info
+  paymentInfo   Json?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  albumsCreated Album[] @relation("AlbumCreator")
+  albumsNarrated Album[] @relation("AlbumNarrator")
+  followers     CreatorFollow[]
+  liveRooms     LiveRoom[]
+  revenues      CreatorRevenue[]
+  giftsReceived LiveGiftTransaction[]
+
+  @@index([isVerified])
+  @@map("creators")
+}
+
+enum CreatorType {
+  INDIVIDUAL
+  STUDIO
+  PUBLISHER
+  BRAND
+}
+
+model CreatorFollow {
+  id        String   @id @default(cuid())
+  creatorId String
+  userId    String
+
+  createdAt DateTime @default(now())
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, userId])
+  @@map("creator_follows")
+}
+
+model CreatorRevenue {
+  id        String   @id @default(cuid())
+  creatorId String
+
+  // Period
+  period    String   // "2024-01"
+
+  // Revenue Details
+  subscriptionShare Decimal @default(0) @db.Decimal(12, 2)
+  directSales       Decimal @default(0) @db.Decimal(12, 2)
+  adRevenue         Decimal @default(0) @db.Decimal(12, 2)
+  tipsReceived      Decimal @default(0) @db.Decimal(12, 2)
+
+  totalGross   Decimal @default(0) @db.Decimal(12, 2)
+  platformFee  Decimal @default(0) @db.Decimal(12, 2)
+  netRevenue   Decimal @default(0) @db.Decimal(12, 2)
+
+  // Settlement
+  status       RevenueStatus @default(PENDING)
+  paidAt       DateTime?
+  paymentMethod String?
+
+  createdAt    DateTime @default(now())
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, period])
+  @@map("creator_revenues")
+}
+
+enum RevenueStatus {
+  PENDING
+  PROCESSING
+  PAID
+}
+
+// ============================================
+// Library & Listening
+// ============================================
+
+model ListeningHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  albumId   String
+
+  // Playback
+  position  Int      @default(0) // in seconds
+  duration  Int
+  progress  Float    @default(0) // 0-100
+  completed Boolean  @default(false)
+
+  // Statistics
+  totalListenTime Int @default(0) // total time spent on this episode
+  listenCount     Int @default(1)
+
+  lastPlayedAt  DateTime @default(now())
+  firstPlayedAt DateTime @default(now())
+
+  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, episodeId])
+  @@index([userId, lastPlayedAt(sort: Desc)])
+  @@map("listening_history")
+}
+
+model LibrarySubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  albumId   String
+
+  notificationEnabled Boolean @default(true)
+  subscribedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, albumId])
+  @@map("library_subscriptions")
+}
+
+model LibraryLike {
+  id        String   @id @default(cuid())
+  userId    String
+
+  targetType LikeTargetType
+  targetId   String
+
+  likedAt   DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album   Album?   @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  episode Episode? @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetType, targetId])
+  @@map("library_likes")
+}
+
+enum LikeTargetType {
+  ALBUM
+  EPISODE
+}
+
+model Playlist {
+  id        String   @id @default(cuid())
+  userId    String
+
+  title       String
+  description String?
+  coverUrl    String?
+  isPublic    Boolean @default(false)
+
+  totalDuration Int @default(0)
+  followerCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodes PlaylistEpisode[]
+
+  @@index([userId])
+  @@map("playlists")
+}
+
+model PlaylistEpisode {
+  id         String   @id @default(cuid())
+  playlistId String
+  episodeId  String
+
+  sortOrder  Int
+  addedAt    DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  episode  Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, episodeId])
+  @@map("playlist_episodes")
+}
+
+model Download {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  albumId   String
+
+  // Status
+  status    DownloadStatus @default(PENDING)
+  progress  Int            @default(0)
+
+  // File Info
+  fileSize  BigInt?
+  quality   AudioQuality @default(MEDIUM)
+
+  // Expiration
+  expiresAt      DateTime
+  lastVerifiedAt DateTime @default(now())
+
+  downloadedAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, episodeId])
+  @@index([userId, status])
+  @@map("downloads")
+}
+
+enum DownloadStatus {
+  PENDING
+  DOWNLOADING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum AudioQuality {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// ============================================
+// Live Streaming
+// ============================================
+
+model LiveRoom {
+  id        String   @id @default(cuid())
+  hostId    String
+
+  // Info
+  title       String
+  description String?
+  coverUrl    String?
+  category    Category?
+  tags        String[]
+
+  // Status
+  status      LiveStatus @default(SCHEDULED)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  endedAt     DateTime?
+
+  // Participants
+  currentListeners    Int @default(0)
+  peakListeners       Int @default(0)
+  totalUniqueListeners Int @default(0)
+
+  // Revenue
+  totalGiftsReceived Int @default(0)
+
+  // Recording
+  isRecorded   Boolean @default(false)
+  recordingUrl String?
+
+  createdAt DateTime @default(now())
+
+  host Creator @relation(fields: [hostId], references: [id])
+  gifts LiveGiftTransaction[]
+
+  @@index([status, scheduledAt])
+  @@map("live_rooms")
+}
+
+enum LiveStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+model LiveGift {
+  id        String   @id @default(cuid())
+
+  name      String
+  icon      String
+  animation String?
+  coinCost  Int
+  hostReceives Int
+
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  @@map("live_gifts")
+}
+
+model LiveGiftTransaction {
+  id        String   @id @default(cuid())
+  roomId    String
+  senderId  String
+  hostId    String
+
+  giftId    String
+  quantity  Int      @default(1)
+  totalCoins Int
+  hostReceived Int
+
+  message   String?
+
+  createdAt DateTime @default(now())
+
+  room   LiveRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation("GiftSender", fields: [senderId], references: [id])
+  host   Creator  @relation(fields: [hostId], references: [id])
+
+  @@index([roomId])
+  @@map("live_gift_transactions")
+}
+
+// ============================================
+// Comments & Reviews
+// ============================================
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+
+  content   String   @db.Text
+
+  likeCount Int      @default(0)
+
+  parentId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  parent  Comment? @relation("CommentReplies", fields: [parentId], references: [id])
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([episodeId])
+  @@map("comments")
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  albumId   String
+
+  rating    Int      // 1-5
+  title     String?
+  content   String?  @db.Text
+
+  likeCount Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, albumId])
+  @@index([albumId])
+  @@map("reviews")
+}
+
+// ============================================
+// Achievements & Gamification
+// ============================================
+
+model Achievement {
+  id          String   @id @default(cuid())
+
+  name        String
+  description String
+  icon        String
+
+  type        AchievementType
+  requirement Int      // e.g., 100 for "100 hours listened"
+
+  coinReward  Int      @default(0)
+
+  isActive    Boolean  @default(true)
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+enum AchievementType {
+  LISTEN_TIME
+  EPISODES_COMPLETED
+  STREAK
+  BOOKS_COMPLETED
+  GENRES_EXPLORED
+  SOCIAL
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String
+
+  progress      Int      @default(0)
+  completed     Boolean  @default(false)
+  completedAt   DateTime?
+
+  createdAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// ============================================
+// Notifications
+// ============================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  NEW_EPISODE
+  SUBSCRIPTION_EXPIRING
+  ACHIEVEMENT_UNLOCKED
+  LIVE_STARTED
+  GIFT_RECEIVED
+  SYSTEM
+}
+
+// ============================================
+// Search & Analytics
+// ============================================
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String?
+
+  query     String
+  resultCount Int
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("search_history")
+}
+
+model PlaybackSync {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  // Current Playback
+  currentEpisodeId String?
+  currentPosition  Int?
+  deviceId         String?
+
+  // Queue
+  queue     Json?
+
+  // Settings
+  settings  Json?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("playback_sync")
+}

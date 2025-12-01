@@ -1,18 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Album, Episode, Creator } from '@audionest/database';
+
+interface SearchResults {
+  albums?: Album[];
+  episodes?: Episode[];
+  creators?: Creator[];
+}
 
 @Injectable()
 export class SearchService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async search(query: string, options: {
     type?: 'all' | 'album' | 'episode' | 'creator';
     page?: number;
     limit?: number;
-  } = {}) {
+  } = {}): Promise<SearchResults> {
     const { type = 'all', page = 1, limit = 20 } = options;
 
-    const results: any = {};
+    const results: SearchResults = {};
 
     if (type === 'all' || type === 'album') {
       const albums = await this.prisma.album.findMany({
@@ -75,11 +82,17 @@ export class SearchService {
       results.creators = creators;
     }
 
+    // Calculate total result count
+    const resultCount =
+      (results.albums?.length ?? 0) +
+      (results.episodes?.length ?? 0) +
+      (results.creators?.length ?? 0);
+
     // Save search history
     await this.prisma.searchHistory.create({
       data: {
         query,
-        resultCount: Object.values(results).flat().length,
+        resultCount,
       },
     });
 

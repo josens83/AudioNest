@@ -3,15 +3,26 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { UserWithAuth, JwtPayload } from '../../common/types';
+import { SubscriptionTier } from '@audionest/database';
+
+interface UserForAuth {
+  id: string;
+  email: string;
+  username: string;
+  avatarUrl: string | null;
+  subscription: SubscriptionTier;
+  coins: number;
+}
 
 @Injectable()
 export class AuthService {
   constructor(
-    private usersService: UsersService,
-    private jwtService: JwtService,
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
   ) {}
 
-  async validateUser(email: string, password: string) {
+  async validateUser(email: string, password: string): Promise<UserForAuth | null> {
     const user = await this.usersService.findByEmail(email);
     if (!user || !user.passwordHash) {
       return null;
@@ -22,8 +33,14 @@ export class AuthService {
       return null;
     }
 
-    const { passwordHash, ...result } = user;
-    return result;
+    return {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      subscription: user.subscription,
+      coins: user.coins,
+    };
   }
 
   async register(dto: RegisterDto) {
@@ -71,8 +88,12 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  private generateTokens(user: any) {
-    const payload = {
+  private generateTokens(user: UserForAuth): {
+    accessToken: string;
+    refreshToken: string;
+    user: UserWithAuth;
+  } {
+    const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
       sub: user.id,
       email: user.email,
       username: user.username,

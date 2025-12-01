@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@audionest/database';
 
 @Injectable()
 export class PlaybackService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async saveProgress(
     userId: string,
@@ -104,8 +105,8 @@ export class PlaybackService {
       currentEpisodeId?: string;
       currentPosition?: number;
       deviceId?: string;
-      queue?: any;
-      settings?: any;
+      queue?: Prisma.JsonValue;
+      settings?: Prisma.JsonValue;
     },
   ) {
     return this.prisma.playbackSync.upsert({

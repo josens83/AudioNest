@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@audionest/database';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({
@@ -37,7 +38,7 @@ export class UsersService {
     });
   }
 
-  async update(id: string, data: Partial<{ avatarUrl: string; phone: string; preferences: any }>) {
+  async update(id: string, data: Partial<{ avatarUrl: string; phone: string; preferences: Prisma.JsonValue }>) {
     return this.prisma.user.update({
       where: { id },
       data,

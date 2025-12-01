@@ -12,11 +12,13 @@ import { CreatorsModule } from './modules/creators/creators.module';
 import { LiveModule } from './modules/live/live.module';
 import { SearchModule } from './modules/search/search.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { getEnvConfig } from './config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      load: [getEnvConfig()],
     }),
     ThrottlerModule.forRoot([
       {

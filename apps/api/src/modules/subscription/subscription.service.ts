@@ -1,10 +1,13 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import Stripe from 'stripe';
 import { SubscriptionTier, PlanType } from '@audionest/database';
 
-const SUBSCRIPTION_PRICES = {
+type SubscriptionTierKey = 'VIP' | 'SVIP';
+type PlanTypeKey = 'MONTHLY' | 'YEARLY';
+
+const SUBSCRIPTION_PRICES: Record<SubscriptionTierKey, Record<PlanTypeKey, number>> = {
   VIP: {
     MONTHLY: 7900,
     YEARLY: 79000,
@@ -15,7 +18,13 @@ const SUBSCRIPTION_PRICES = {
   },
 };
 
-const COIN_PACKAGES = [
+interface CoinPackage {
+  id: string;
+  price: number;
+  coins: number;
+}
+
+const COIN_PACKAGES: CoinPackage[] = [
   { id: 'small', price: 3000, coins: 30 },
   { id: 'medium', price: 10000, coins: 110 },
   { id: 'large', price: 30000, coins: 360 },
@@ -24,11 +33,11 @@ const COIN_PACKAGES = [
 
 @Injectable()
 export class SubscriptionService {
-  private stripe: Stripe;
+  private stripe: Stripe | null = null;
 
   constructor(
-    private prisma: PrismaService,
-    private configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
   ) {
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     if (stripeKey) {
@@ -45,6 +54,10 @@ export class SubscriptionService {
         coins: true,
       },
     });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
     const activeSubscription = await this.prisma.subscription.findFirst({
       where: {
@@ -64,7 +77,7 @@ export class SubscriptionService {
 
   async createCheckoutSession(
     userId: string,
-    tier: 'VIP' | 'SVIP',
+    tier: SubscriptionTierKey,
     planType: PlanType,
   ) {
     if (!this.stripe) {
@@ -76,7 +89,12 @@ export class SubscriptionService {
       select: { email: true },
     });
 
-    const price = SUBSCRIPTION_PRICES[tier][planType];
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const planTypeKey = planType as PlanTypeKey;
+    const price = SUBSCRIPTION_PRICES[tier][planTypeKey];
 
     const session = await this.stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -127,7 +145,14 @@ export class SubscriptionService {
   }
 
   private async activateSubscription(session: Stripe.Checkout.Session) {
-    const { userId, tier, planType } = session.metadata;
+    const metadata = session.metadata;
+    if (!metadata?.userId || !metadata?.tier || !metadata?.planType) {
+      throw new BadRequestException('Invalid session metadata');
+    }
+
+    const { userId, tier, planType } = metadata;
+    const tierKey = tier as SubscriptionTierKey;
+    const planTypeKey = planType as PlanTypeKey;
 
     const expiresAt = new Date();
     if (planType === 'MONTHLY') {
@@ -144,7 +169,7 @@ export class SubscriptionService {
         status: 'ACTIVE',
         platform: 'STRIPE',
         planType: planType as PlanType,
-        amount: SUBSCRIPTION_PRICES[tier][planType],
+        amount: SUBSCRIPTION_PRICES[tierKey][planTypeKey],
         currentPeriodStart: new Date(),
         currentPeriodEnd: expiresAt,
         externalSubscriptionId: session.subscription as string,
@@ -169,6 +194,10 @@ export class SubscriptionService {
       where: { id: userId },
       select: { coins: true },
     });
+
+    if (!user) {
+      throw new NotFoundException('User not found after subscription activation');
+    }
 
     await this.prisma.coinTransaction.create({
       data: {
@@ -256,6 +285,10 @@ export class SubscriptionService {
       where: { id: userId },
       select: { coins: true },
     });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
     return { coins: user.coins };
   }

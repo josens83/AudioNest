@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Category, AccessType } from '@audionest/database';
+import { Category, AccessType, Prisma } from '@audionest/database';
+import { PaginatedResponse } from '../../common/types';
 
 @Injectable()
 export class AlbumsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async findAll(options: {
     category?: Category;
@@ -16,7 +17,7 @@ export class AlbumsService {
   }) {
     const { category, accessType, page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc' } = options;
 
-    const where: any = {
+    const where: Prisma.AlbumWhereInput = {
       isPublished: true,
     };
 

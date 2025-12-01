@@ -1,7 +1,15 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-const LIVE_GIFTS = [
+interface LiveGift {
+  id: string;
+  name: string;
+  icon: string;
+  coinCost: number;
+  hostReceives: number;
+}
+
+const LIVE_GIFTS: LiveGift[] = [
   { id: 'heart', name: '하트', icon: '❤️', coinCost: 1, hostReceives: 0 },
   { id: 'coffee', name: '커피', icon: '☕', coinCost: 10, hostReceives: 5 },
   { id: 'mic', name: '마이크', icon: '🎤', coinCost: 50, hostReceives: 25 },
@@ -13,7 +21,7 @@ const LIVE_GIFTS = [
 
 @Injectable()
 export class LiveService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async findLive(page = 1, limit = 20) {
     const [rooms, total] = await Promise.all([
@@ -121,7 +129,7 @@ export class LiveService {
       select: { currentListeners: true, peakListeners: true },
     });
 
-    if (updated.currentListeners > updated.peakListeners) {
+    if (updated && updated.currentListeners > updated.peakListeners) {
       await this.prisma.liveRoom.update({
         where: { id: roomId },
         data: { peakListeners: updated.currentListeners },
@@ -157,6 +165,10 @@ export class LiveService {
       select: { coins: true },
     });
 
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     if (user.coins < totalCost) {
       throw new ForbiddenException('Insufficient coins');
     }
@@ -178,6 +190,10 @@ export class LiveService {
       where: { id: userId },
       select: { coins: true },
     });
+
+    if (!sender) {
+      throw new NotFoundException('Sender not found after transaction');
+    }
 
     await this.prisma.coinTransaction.create({
       data: {

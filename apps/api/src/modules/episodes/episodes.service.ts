@@ -4,7 +4,7 @@ import { SubscriptionTier, EpisodeAccessType } from '@audionest/database';
 
 @Injectable()
 export class EpisodesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async findByAlbum(albumId: string, page = 1, limit = 50) {
     const [episodes, total] = await Promise.all([

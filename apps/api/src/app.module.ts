@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { AlbumsModule } from './modules/albums/albums.module';
@@ -12,6 +13,7 @@ import { CreatorsModule } from './modules/creators/creators.module';
 import { LiveModule } from './modules/live/live.module';
 import { SearchModule } from './modules/search/search.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { LoggerModule } from './common/logger';
 import { getEnvConfig } from './config';
 
 @Module({
@@ -20,13 +22,16 @@ import { getEnvConfig } from './config';
       isGlobal: true,
       load: [getEnvConfig()],
     }),
+    // Global rate limiting: 100 requests per minute by default
     ThrottlerModule.forRoot([
       {
+        name: 'default',
         ttl: 60000,
         limit: 100,
       },
     ]),
     PrismaModule,
+    LoggerModule,
     AuthModule,
     UsersModule,
     AlbumsModule,
@@ -37,6 +42,13 @@ import { getEnvConfig } from './config';
     CreatorsModule,
     LiveModule,
     SearchModule,
+  ],
+  providers: [
+    // Global throttler guard - applies rate limiting to all endpoints
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

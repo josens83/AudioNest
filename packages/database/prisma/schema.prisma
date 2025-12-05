@@ -71,6 +71,30 @@ model User {
   userCredits         UserCredit?
   creditTransactions  CreditTransaction[]
 
+  // Social relations
+  followers           UserFollow[] @relation("UserFollowing")
+  following           UserFollow[] @relation("UserFollowers")
+  playlistCollaborations PlaylistCollaborator[]
+  playlistFollows     PlaylistFollower[]
+  ownedClubs          AudioClub[] @relation("ClubOwner")
+  clubMemberships     ClubMember[]
+  activities          UserActivity[]
+  activityLikes       ActivityLike[]
+  activityComments    ActivityComment[]
+
+  // Family & Gift relations
+  familyPlanOwned     FamilyPlan? @relation("FamilyPlanOwner")
+  familyMembership    FamilyMember?
+  giftsSentSub        GiftSubscription[] @relation("GiftsSent")
+  giftsReceivedSub    GiftSubscription[] @relation("GiftsReceived")
+
+  // Notification relations
+  notificationPreference NotificationPreference?
+  devices                UserDevice[]
+
+  // Admin relations
+  auditLogs              AuditLog[]
+
   // OAuth accounts
   accounts      Account[]
   sessions      Session[]
@@ -596,6 +620,10 @@ model Playlist {
   description String?
   coverUrl    String?
   isPublic    Boolean @default(false)
+  visibility  String  @default("PRIVATE") // PRIVATE, FRIENDS, PUBLIC
+
+  // Collaboration
+  allowCollaborators Boolean @default(false)
 
   totalDuration Int @default(0)
   followerCount Int @default(0)
@@ -603,10 +631,13 @@ model Playlist {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episodes PlaylistEpisode[]
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodes      PlaylistEpisode[]
+  collaborators PlaylistCollaborator[]
+  followers     PlaylistFollower[]
 
   @@index([userId])
+  @@index([isPublic, followerCount(sort: Desc)])
   @@map("playlists")
 }
 
@@ -1216,26 +1247,104 @@ model Notification {
   type      NotificationType
   title     String
   body      String
+  imageUrl  String?
   data      Json?
 
-  isRead    Boolean  @default(false)
+  read      Boolean  @default(false)
   readAt    DateTime?
+  priority  NotificationPriority @default(NORMAL)
 
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, isRead])
+  @@index([userId, read])
+  @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
 }
 
 enum NotificationType {
+  // Content notifications
   NEW_EPISODE
+  NEW_ALBUM
+  CONTENT_RECOMMENDATION
+
+  // Social notifications
+  NEW_FOLLOWER
+  PLAYLIST_INVITE
+  CLUB_INVITE
+  CLUB_MEETING
+  ACTIVITY_LIKE
+  ACTIVITY_COMMENT
+
+  // Creator notifications
+  TIP_RECEIVED
+  PAYOUT_PROCESSED
+  MILESTONE_REACHED
+
+  // System notifications
   SUBSCRIPTION_EXPIRING
-  ACHIEVEMENT_UNLOCKED
-  LIVE_STARTED
+  SUBSCRIPTION_RENEWED
+  FAMILY_INVITE
   GIFT_RECEIVED
+  ACHIEVEMENT_UNLOCKED
+  LEVEL_UP
+  LIVE_STARTED
+
+  // Promotional
+  PROMOTION
+  ANNOUNCEMENT
   SYSTEM
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model NotificationPreference {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  pushEnabled   Boolean @default(true)
+  emailEnabled  Boolean @default(true)
+  inAppEnabled  Boolean @default(true)
+
+  quietHoursStart Int?  // 0-23
+  quietHoursEnd   Int?  // 0-23
+
+  // Per-type settings stored as JSON
+  typeSettings Json?
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model UserDevice {
+  id        String   @id @default(cuid())
+  userId    String
+
+  pushToken String
+  platform  String   // android, ios, web
+
+  deviceName  String?
+  deviceModel String?
+
+  isActive     Boolean  @default(true)
+  lastActiveAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([pushToken])
+  @@map("user_devices")
 }
 
 // ============================================
@@ -1273,4 +1382,357 @@ model PlaybackSync {
   updatedAt DateTime @updatedAt
 
   @@map("playback_sync")
+}
+
+// ============================================
+// Social - User Following
+// ============================================
+
+model UserFollow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+
+  createdAt   DateTime @default(now())
+
+  follower    User     @relation("UserFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("user_follows")
+}
+
+// ============================================
+// Social - Playlist Collaboration
+// ============================================
+
+model PlaylistCollaborator {
+  id         String   @id @default(cuid())
+  playlistId String
+  userId     String
+
+  canEdit    Boolean  @default(false)
+  addedAt    DateTime @default(now())
+
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, userId])
+  @@map("playlist_collaborators")
+}
+
+model PlaylistFollower {
+  id         String   @id @default(cuid())
+  playlistId String
+  userId     String
+
+  followedAt DateTime @default(now())
+
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, userId])
+  @@map("playlist_followers")
+}
+
+// ============================================
+// Social - Audio Clubs
+// ============================================
+
+model AudioClub {
+  id          String   @id @default(cuid())
+  ownerId     String
+
+  name        String
+  description String   @db.Text
+  coverUrl    String?
+
+  type        ClubType
+  category    String?
+  tags        String[]
+
+  maxMembers      Int     @default(50)
+  requireApproval Boolean @default(false)
+
+  // Current reading/listening
+  currentContentId   String?
+  currentContentType String?
+
+  memberCount Int @default(0)
+
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User @relation("ClubOwner", fields: [ownerId], references: [id])
+  members     ClubMember[]
+  meetings    ClubMeeting[]
+  discussions ClubDiscussion[]
+
+  @@index([type, isActive])
+  @@map("audio_clubs")
+}
+
+enum ClubType {
+  BOOK_CLUB
+  PODCAST_CLUB
+  LISTENING_PARTY
+  STUDY_GROUP
+}
+
+model ClubMember {
+  id        String   @id @default(cuid())
+  clubId    String
+  userId    String
+
+  role      ClubMemberRole @default(MEMBER)
+
+  // Progress tracking
+  listenProgress Float @default(0)
+
+  joinedAt  DateTime @default(now())
+
+  club      AudioClub @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, userId])
+  @@map("club_members")
+}
+
+enum ClubMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model ClubMeeting {
+  id          String   @id @default(cuid())
+  clubId      String
+
+  topic       String
+  description String?  @db.Text
+
+  scheduledAt DateTime
+  contentId   String?
+  contentType String?
+
+  createdAt   DateTime @default(now())
+
+  club        AudioClub @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@index([clubId, scheduledAt])
+  @@map("club_meetings")
+}
+
+model ClubDiscussion {
+  id        String   @id @default(cuid())
+  clubId    String
+  userId    String
+
+  content   String   @db.Text
+  parentId  String?
+
+  likeCount Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  club      AudioClub @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  parent    ClubDiscussion? @relation("DiscussionReplies", fields: [parentId], references: [id])
+  replies   ClubDiscussion[] @relation("DiscussionReplies")
+
+  @@index([clubId, createdAt(sort: Desc)])
+  @@map("club_discussions")
+}
+
+// ============================================
+// Social - Activity Feed
+// ============================================
+
+model UserActivity {
+  id        String   @id @default(cuid())
+  userId    String
+
+  type      ActivityType
+
+  // Target content
+  targetType String?
+  targetId   String?
+  targetTitle String?
+  targetCoverUrl String?
+
+  // Additional data
+  metadata  Json?
+
+  // Engagement
+  likeCount    Int @default(0)
+  commentCount Int @default(0)
+
+  // Visibility
+  isPublic  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes     ActivityLike[]
+  comments  ActivityComment[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+  @@map("user_activities")
+}
+
+enum ActivityType {
+  STARTED_LISTENING
+  FINISHED_EPISODE
+  FINISHED_ALBUM
+  WROTE_REVIEW
+  EARNED_BADGE
+  JOINED_CLUB
+  CREATED_PLAYLIST
+  FOLLOWED_CREATOR
+  STREAK_MILESTONE
+  LEVEL_UP
+}
+
+model ActivityLike {
+  id         String   @id @default(cuid())
+  activityId String
+  userId     String
+
+  createdAt  DateTime @default(now())
+
+  activity   UserActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, userId])
+  @@map("activity_likes")
+}
+
+model ActivityComment {
+  id         String   @id @default(cuid())
+  activityId String
+  userId     String
+
+  content    String   @db.Text
+
+  createdAt  DateTime @default(now())
+
+  activity   UserActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, createdAt])
+  @@map("activity_comments")
+}
+
+// ============================================
+// Family Plan & Gift Subscriptions
+// ============================================
+
+model FamilyPlan {
+  id          String   @id @default(cuid())
+  ownerId     String   @unique
+
+  maxMembers  Int      @default(6)
+  memberCount Int      @default(1)
+
+  status      FamilyPlanStatus @default(ACTIVE)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User @relation("FamilyPlanOwner", fields: [ownerId], references: [id])
+  members     FamilyMember[]
+
+  @@map("family_plans")
+}
+
+enum FamilyPlanStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+model FamilyMember {
+  id           String   @id @default(cuid())
+  familyPlanId String
+  userId       String   @unique
+
+  invitedAt    DateTime @default(now())
+  acceptedAt   DateTime?
+
+  status       FamilyMemberStatus @default(PENDING)
+
+  familyPlan   FamilyPlan @relation(fields: [familyPlanId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyPlanId])
+  @@map("family_members")
+}
+
+enum FamilyMemberStatus {
+  PENDING
+  ACTIVE
+  REMOVED
+}
+
+model GiftSubscription {
+  id          String   @id @default(cuid())
+  senderId    String
+  recipientEmail String
+
+  tier        SubscriptionTier
+  duration    Int      // in months
+
+  // Gift details
+  message     String?  @db.Text
+  senderName  String
+
+  // Payment
+  amount      Int
+  currency    String   @default("KRW")
+
+  // Redemption
+  code        String   @unique
+  redeemedBy  String?
+  redeemedAt  DateTime?
+
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  sender      User     @relation("GiftsSent", fields: [senderId], references: [id])
+  recipient   User?    @relation("GiftsReceived", fields: [redeemedBy], references: [id])
+
+  @@index([code])
+  @@index([senderId])
+  @@map("gift_subscriptions")
+}
+
+// ============================================
+// Admin & Audit
+// ============================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  adminId     String
+
+  action      String   // UPDATE_USER, DELETE_ALBUM, VERIFY_CREATOR, etc.
+  targetType  String   // user, album, creator, system
+  targetId    String
+
+  details     Json?
+
+  ipAddress   String
+
+  createdAt   DateTime @default(now())
+
+  admin       User     @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([action])
+  @@index([targetType])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

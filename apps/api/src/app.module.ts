@@ -12,6 +12,8 @@ import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { CreatorsModule } from './modules/creators/creators.module';
 import { LiveModule } from './modules/live/live.module';
 import { SearchModule } from './modules/search/search.module';
+import { GamificationModule } from './modules/gamification/gamification.module';
+import { CreditsModule } from './modules/credits/credits.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { LoggerModule } from './common/logger';
 import { getEnvConfig } from './config';
@@ -42,6 +44,8 @@ import { getEnvConfig } from './config';
     CreatorsModule,
     LiveModule,
     SearchModule,
+    GamificationModule,
+    CreditsModule,
   ],
   providers: [
     // Global throttler guard - applies rate limiting to all endpoints

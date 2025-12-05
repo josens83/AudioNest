@@ -61,6 +61,16 @@ model User {
   notifications       Notification[]
   giftsSent           LiveGiftTransaction[] @relation("GiftSender")
 
+  // Gamification relations
+  badges              UserBadge[]
+  userLevel           UserLevel?
+  challenges          UserChallenge[]
+  leaderboardEntries  LeaderboardEntry[]
+
+  // Credit relations
+  userCredits         UserCredit?
+  creditTransactions  CreditTransaction[]
+
   // OAuth accounts
   accounts      Account[]
   sessions      Session[]
@@ -840,6 +850,359 @@ model UserAchievement {
 
   @@unique([userId, achievementId])
   @@map("user_achievements")
+}
+
+// ============================================
+// Advanced Gamification - Badges
+// ============================================
+
+model Badge {
+  id          String   @id @default(cuid())
+
+  name        String
+  description String
+  icon        String
+  category    BadgeCategory
+
+  // Rarity affects display and rewards
+  rarity      BadgeRarity @default(COMMON)
+
+  // Earning conditions
+  condition   Json     // { type: "listen_time", value: 100 }
+
+  // Rewards
+  coinReward  Int      @default(0)
+  xpReward    Int      @default(0)
+
+  // Display
+  isHidden    Boolean  @default(false) // Hidden until earned
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  createdAt   DateTime @default(now())
+
+  userBadges  UserBadge[]
+
+  @@index([category, isActive])
+  @@map("badges")
+}
+
+enum BadgeCategory {
+  LISTENING     // 청취 관련
+  COLLECTION    // 컬렉션/라이브러리
+  SOCIAL        // 소셜 활동
+  ACHIEVEMENT   // 특별 업적
+  EVENT         // 이벤트/시즌 한정
+  CREATOR       // 크리에이터 관련
+}
+
+enum BadgeRarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+
+  earnedAt  DateTime @default(now())
+
+  // Optional metadata
+  metadata  Json?    // Additional context about earning
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge     Badge    @relation(fields: [badgeId], references: [id])
+
+  @@unique([userId, badgeId])
+  @@index([userId, earnedAt(sort: Desc)])
+  @@map("user_badges")
+}
+
+// ============================================
+// User Levels & Experience
+// ============================================
+
+model UserLevel {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  level     Int      @default(1)
+  xp        Int      @default(0)
+  xpToNext  Int      @default(100)
+
+  // Titles earned at certain levels
+  title     String?
+
+  // Statistics
+  totalXpEarned Int  @default(0)
+  levelUps      Int  @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_levels")
+}
+
+model LevelTier {
+  id          String   @id @default(cuid())
+
+  level       Int      @unique
+  xpRequired  Int
+  title       String?
+
+  // Benefits at this level
+  benefits    Json?    // { downloadLimit: 50, skipAds: true }
+
+  // Visual
+  icon        String?
+  frameColor  String?
+
+  @@map("level_tiers")
+}
+
+// ============================================
+// Challenges & Missions
+// ============================================
+
+model Challenge {
+  id          String   @id @default(cuid())
+
+  title       String
+  description String
+  icon        String?
+
+  type        ChallengeType
+  category    Category?
+
+  // Conditions
+  conditions  Json     // { type: "listen_minutes", value: 60, category: "AUDIOBOOK_FICTION" }
+
+  // Rewards
+  coinReward  Int      @default(0)
+  xpReward    Int      @default(0)
+  badgeId     String?  // Optional badge reward
+
+  // Duration
+  duration    ChallengeDuration
+  startsAt    DateTime?
+  endsAt      DateTime?
+
+  // Limits
+  maxParticipants Int?
+
+  isActive    Boolean  @default(true)
+  isHidden    Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+
+  userChallenges UserChallenge[]
+
+  @@index([type, isActive])
+  @@index([startsAt, endsAt])
+  @@map("challenges")
+}
+
+enum ChallengeType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  SPECIAL   // 이벤트 챌린지
+  SEASONAL  // 시즌 챌린지
+}
+
+enum ChallengeDuration {
+  ONE_DAY
+  THREE_DAYS
+  ONE_WEEK
+  TWO_WEEKS
+  ONE_MONTH
+  CUSTOM
+}
+
+model UserChallenge {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+
+  status      UserChallengeStatus @default(ACTIVE)
+  progress    Int      @default(0)
+  target      Int      // Copied from challenge at join time
+
+  joinedAt    DateTime @default(now())
+  completedAt DateTime?
+  expiresAt   DateTime
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+
+  @@unique([userId, challengeId])
+  @@index([userId, status])
+  @@index([expiresAt])
+  @@map("user_challenges")
+}
+
+enum UserChallengeStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+// ============================================
+// Leaderboards
+// ============================================
+
+model Leaderboard {
+  id          String   @id @default(cuid())
+
+  name        String
+  description String?
+
+  type        LeaderboardType
+  scope       LeaderboardScope
+  category    Category?
+
+  // Reset period
+  resetPeriod LeaderboardPeriod
+  lastResetAt DateTime @default(now())
+  nextResetAt DateTime
+
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  entries     LeaderboardEntry[]
+
+  @@index([type, scope, isActive])
+  @@map("leaderboards")
+}
+
+enum LeaderboardType {
+  LISTEN_TIME
+  EPISODES_COMPLETED
+  STREAK
+  XP_EARNED
+  GIFTS_SENT
+  REVIEWS_WRITTEN
+}
+
+enum LeaderboardScope {
+  GLOBAL
+  FRIENDS
+  CATEGORY
+}
+
+enum LeaderboardPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  ALL_TIME
+}
+
+model LeaderboardEntry {
+  id            String   @id @default(cuid())
+  leaderboardId String
+  userId        String
+
+  score         BigInt   @default(0)
+  rank          Int?
+  previousRank  Int?
+
+  // Period tracking
+  periodStart   DateTime
+  periodEnd     DateTime
+
+  updatedAt     DateTime @updatedAt
+
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([leaderboardId, userId, periodStart])
+  @@index([leaderboardId, score(sort: Desc)])
+  @@index([userId])
+  @@map("leaderboard_entries")
+}
+
+// ============================================
+// Credits System (for content purchases)
+// ============================================
+
+model CreditPackage {
+  id          String   @id @default(cuid())
+
+  name        String
+  description String?
+
+  credits     Int      // Number of credits
+  price       Int      // Price in KRW
+  currency    String   @default("KRW")
+
+  // Bonus
+  bonusCredits Int     @default(0)
+
+  // Display
+  isPopular   Boolean  @default(false)
+  isBestValue Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  createdAt   DateTime @default(now())
+
+  @@map("credit_packages")
+}
+
+model UserCredit {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+
+  balance     Int      @default(0)
+  bonusBalance Int     @default(0)  // Bonus credits (used first)
+
+  totalPurchased Int   @default(0)
+  totalSpent     Int   @default(0)
+
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_credits")
+}
+
+model CreditTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+
+  type        CreditTransactionType
+  amount      Int      // Positive for credit, negative for debit
+  balance     Int      // Balance after transaction
+  isBonus     Boolean  @default(false)
+
+  // Reference
+  referenceType String?
+  referenceId   String?
+  description   String?
+
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("credit_transactions")
+}
+
+enum CreditTransactionType {
+  PURCHASE
+  SUBSCRIPTION_BONUS
+  CONTENT_PURCHASE
+  REFUND
+  GIFT
+  PROMOTION
+  EXPIRED
 }
 
 // ============================================
